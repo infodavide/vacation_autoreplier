@@ -26,6 +26,7 @@ import sys
 import time
 import locale
 import datetime
+import html
 from enum import Enum
 from lxml import etree
 from typing import Any, Dict, List, cast, Pattern
@@ -41,6 +42,9 @@ from smtplib import SMTP, SMTP_SSL
 from subprocess import call
 from textwrap import dedent
 from time import sleep
+from io import StringIO
+from html.parser import HTMLParser
+from polyglot.detect import Detector
 
 __author__ = 'David Rolland, contact@infodavid.org, based on script written by Bertrand Bordage'
 __copyright__ = 'Copyright © 2022 David Rolland'
@@ -85,6 +89,52 @@ def create_rotating_log(path: str, level: str) -> logging.Logger:
     return result
 
 
+# noinspection PyTypeChecker
+def get_message_language(value: message.Message) -> str:
+    body: str = None
+    if value.is_multipart():
+        for part in value.walk():
+            ctype: str = part.get_content_type()
+            cdispo: str = str(part.get('Content-Disposition'))
+            # skip any text/plain (txt) attachments
+            if ctype == 'text/plain' and 'attachment' not in cdispo:
+                body = html.escape(str(part.get_payload(decode=True), 'utf-8'))  # decode
+                break
+    # not multipart - i.e. plain text, no attachments, keeping fingers crossed
+    else:
+        ctype: str = value.get_content_type()
+        if ctype != 'text/html':
+            body = html.escape(str(value.get_payload(decode=True), 'utf-8'))
+        else:
+            body = str(value.get_payload(decode=True), 'utf-8')
+    if body is not None:
+        for language in Detector(body).languages:
+            if language.confidence > 85:
+                return language.code
+    return DEFAULT_LANGUAGE
+
+
+class HTMLStripper(HTMLParser):
+    @staticmethod
+    def strip_tags(value) -> str:
+        stripper: HTMLStripper = HTMLStripper()
+        stripper.feed(value)
+        return stripper.get_data()
+
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text = StringIO()
+
+    def handle_data(self, d) -> None:
+        self.text.write(d)
+
+    def get_data(self) -> str:
+        return self.text.getvalue()
+
+
 class ReplyTemplateType(str, Enum):
     HTML = 'HTML'
     TEXT = 'TEXT'
@@ -106,7 +156,7 @@ class ReplyTemplate(object):
         self.lang = node.get('lang')
         if not self.lang:
             self.lang = DEFAULT_LANGUAGE
-        self.lang =  self.lang.lower()
+        self.lang = self.lang.lower()
         self.type = node.get('type')
         if not self.type:
             self.type = ReplyTemplateType.TEXT
@@ -115,7 +165,7 @@ class ReplyTemplate(object):
         if not self.body:
             raise IOError('Template has no body')
 
-    def __str__(self):
+    def __str__(self) -> str:
         buffer: str = 'Template'
         if self.lang is not None:
             buffer += ', language: ' + self.lang
@@ -460,6 +510,7 @@ class AutoReplier:
         Connect to the SQLITE3 database.
         """
         self.__logger.info('Connecting to the database...')
+        # TODO put the db file beside the configuration file
         con: sqlite3.Connection = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
         # self.__db_con.set_trace_callback(print)
         self.__logger.info('Connected to the database')
@@ -496,14 +547,18 @@ class AutoReplier:
         if '<' in original_recipient:
             original_recipient: str = (original_recipient.split('<'))[1].split('>')[0]
         original_language: str = original['Content-Language']
-        if not original_language:
-            original_language = DEFAULT_LANGUAGE
+        if original_language is None:
+            original_language = get_message_language(original)
+            if original_language is None:
+                original_language = DEFAULT_LANGUAGE
+        self.__logger.debug('Original language: ' + original_language)
         mail: MIMEMultipart = MIMEMultipart('alternative')
         mail['Message-ID'] = make_msgid()
         mail['References'] = mail['In-Reply-To'] = original['Message-ID']
         mail['Subject'] = 'Re: ' + original['Subject']
         mail['From'] = original_recipient
         mail['To'] = original['Reply-To'] or original['From']
+        self.__logger.debug('Original recipient: ' + original_recipient)
         template: ReplyTemplate = None
         d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
         if original_recipient in d1:
