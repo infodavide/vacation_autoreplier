@@ -101,6 +101,7 @@
       <xs:attribute name="block-hours" type="xs:unsignedByte" default="12" />
       <xs:attribute name="refresh-delay" type="xs:unsignedByte" default="60" />
       <xs:attribute name="date" type="xs:date" use="required" />
+      <xs:attribute name="path" type="xs:string" default="" />
     </xs:complexType>
   </xs:element>
 </xs:schema>

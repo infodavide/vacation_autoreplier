@@ -27,10 +27,11 @@ if CONFIG_PATH.startswith("'") and CONFIG_PATH.endswith("'"):
 if not os.path.exists(CONFIG_PATH):
     CONFIG_PATH = str(pathlib.Path(__file__).parent) + os.sep + CONFIG_PATH
 LOG_PATH: str = os.path.splitext(CONFIG_PATH)[0] + '.log'
-LOCK_PATH: str = os.path.splitext(CONFIG_PATH)[0] + '.lck'
-settings = AutoReplierSettings()
-settings.parse(CONFIG_PATH)
-
+LOCK_PATH: str = os.path.abspath(os.path.dirname(CONFIG_PATH)) + os.sep + '.autoreplier.lck'
+settings: AutoReplierSettings = AutoReplierSettings()
+settings.log_path = LOG_PATH
+settings.log_level = LOG_LEVEL
+settings.parse(os.path.abspath(CONFIG_PATH))
 
 if __name__ == '__main__':
     with FileLock(LOCK_PATH):
