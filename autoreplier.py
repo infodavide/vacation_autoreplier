@@ -27,8 +27,8 @@ import time
 import locale
 import datetime
 import html
+import xml.etree.ElementTree as etree
 from enum import Enum
-from lxml import etree
 from typing import Any, Dict, List, cast, Pattern
 from email import message_from_bytes, message
 from email.mime.multipart import MIMEMultipart
@@ -44,13 +44,13 @@ from textwrap import dedent
 from time import sleep
 from io import StringIO
 from html.parser import HTMLParser
-from polyglot.detect import Detector
+# not working with 3.9.2 on Debian from polyglot.detect import Detector
 
 __author__ = 'David Rolland, contact@infodavid.org, based on script written by Bertrand Bordage'
 __copyright__ = 'Copyright © 2022 David Rolland'
 __license__ = 'MIT'
 
-DB_PATH: str = str(pathlib.Path(__file__).parent) + os.sep + 'auto_replier.db'
+DB_FILENAME: str = 'auto_replier.db'
 IMAP4_PORT: int = 143
 SMTP_PORT: int = 25
 DEFAULT_LANGUAGE: str = 'en'
@@ -107,10 +107,11 @@ def get_message_language(value: message.Message) -> str:
             body = html.escape(str(value.get_payload(decode=True), 'utf-8'))
         else:
             body = str(value.get_payload(decode=True), 'utf-8')
-    if body is not None:
-        for language in Detector(body).languages:
-            if language.confidence > 85:
-                return language.code
+    # Not working with 3.9.2 on Debian
+    #if body is not None:
+    #    for language in Detector(body).languages:
+    #        if language.confidence > 85:
+    #            return language.code
     return DEFAULT_LANGUAGE
 
 
@@ -205,6 +206,7 @@ class AutoReplierSettings(object):
     skipped_domains: DomainList = list()  # List of domains (or regular expressions)  to ignore incoming message
     skipped_subjects: SubjectList = list()  # List of subjects (or regular expressions)  to ignore incoming message
     templates: TemplateList = list()  # List of reply templates
+    path: str = None  # Path for the files used by the application
     log_path: str  # Path to the logs file, not used in this version
     log_level: str  # Level of logs, not used in this version
 
@@ -239,7 +241,7 @@ class AutoReplierSettings(object):
             if v is not None:
                 self.log_level = v.text
         accounts = {}
-        for node in tree.xpath('/configuration/accounts/account'):
+        for node in tree.findall('accounts/account'):
             v1 = node.get('user')
             v2 = node.get('password')
             v3 = node.get('id')
@@ -277,16 +279,17 @@ class AutoReplierSettings(object):
         if account:
             self.smtp_user = account[0]
             self.smtp_password = account[1]
-        for node in tree.xpath('/configuration/skipped/domains/domain'):
+        for node in tree.findall('skipped/domains/domain'):
             self.skipped_domains.append(node.text)
-        for node in tree.xpath('/configuration/skipped/addresses/address'):
+        for node in tree.findall('skipped/addresses/address'):
             self.skipped_addresses.append(node.text)
-        for node in tree.xpath('/configuration/skipped/subjects/subject'):
+        for node in tree.findall('skipped/subjects/subject'):
             self.skipped_subjects.append(node.text)
-        for node in tree.xpath('/configuration/templates/template'):
+        for node in tree.findall('templates/template'):
             template: ReplyTemplate = ReplyTemplate()
             template.parse(node)
             self.templates.append(template)
+        self.path = os.path.dirname(path)
 
 
 class AutoReplier:
@@ -341,9 +344,11 @@ class AutoReplier:
                 locale.setlocale(locale.LC_TIME, new_locale)
                 template.body = template.body.replace('${date}', self.__settings.date.strftime("%A %-d %B %Y"))
                 locale.setlocale(locale.LC_TIME, previous_locale)
+            #HTML or text template ?
             d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
             if template.type == ReplyTemplateType.HTML:
                 d1 = self.__html_templates
+            #Set default if not already done
             if DEFAULT_KEY in d1:
                 d2: Dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
             else:
@@ -352,6 +357,7 @@ class AutoReplier:
             if len(d2) == 0:
                 d2[DEFAULT_KEY] = template
                 self.__logger.debug('Template added to default: ' + str(template))
+            #Set using email
             if template.email:
                 if template.email in d1:
                     d2: Dict[str, ReplyTemplate] = d1[template.email]
@@ -360,6 +366,7 @@ class AutoReplier:
                     d1[template.email] = d2
             else:
                 d2 = d1[DEFAULT_KEY]
+            #Set using language
             if template.lang:
                 if template.lang not in d2:
                     d2[template.lang] = template
@@ -510,8 +517,7 @@ class AutoReplier:
         Connect to the SQLITE3 database.
         """
         self.__logger.info('Connecting to the database...')
-        # TODO put the db file beside the configuration file
-        con: sqlite3.Connection = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+        con: sqlite3.Connection = sqlite3.connect(self.__settings.path + os.sep + DB_FILENAME, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
         # self.__db_con.set_trace_callback(print)
         self.__logger.info('Connected to the database')
         return con
@@ -521,8 +527,8 @@ class AutoReplier:
         Create the table if it does not exist.
         """
         self.__logger.info('Creating table if not present in the database...')
-        if self.__test and os.path.exists(DB_PATH):
-            os.unlink(DB_PATH)
+        if self.__test and os.path.exists(self.__settings.path + os.sep + DB_FILENAME):
+            os.unlink(self.__settings.path + os.sep + DB_FILENAME)
         con: sqlite3.Connection = self._db_connect()
         try:
             cur: sqlite3.Cursor = con.cursor()
@@ -551,6 +557,7 @@ class AutoReplier:
             original_language = get_message_language(original)
             if original_language is None:
                 original_language = DEFAULT_LANGUAGE
+        original_language = original_language.split(',')[0]
         self.__logger.debug('Original language: ' + original_language)
         mail: MIMEMultipart = MIMEMultipart('alternative')
         mail['Message-ID'] = make_msgid()
@@ -560,6 +567,7 @@ class AutoReplier:
         mail['To'] = original['Reply-To'] or original['From']
         self.__logger.debug('Original recipient: ' + original_recipient)
         template: ReplyTemplate = None
+        # Search in text templates
         d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
         if original_recipient in d1:
             d2: Dict[str, ReplyTemplate] = d1[original_recipient]
@@ -576,6 +584,7 @@ class AutoReplier:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(dedent(template.body), 'plain'))
             self.__logger.debug('Using text plain template:\n' + template.body)
+        # Search in HTML templates
         template = None
         d1: Dict[str, Dict[str, ReplyTemplate]] = self.__html_templates
         if original_recipient in d1:
@@ -593,6 +602,7 @@ class AutoReplier:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(template.body, 'html'))
             self.__logger.debug('Using HTML template:\n' + template.body)
+        if len(mail.items()) > 0:
             return mail
         return None
 

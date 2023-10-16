@@ -130,3 +130,5 @@ dmypy.json
 *.db
 *.xml
 /autoreplier_infodavid.lck
+/.autoreplier.lck
+/event_log.txt
