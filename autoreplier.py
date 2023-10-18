@@ -370,7 +370,8 @@ class AutoReplier:
             if template.lang:
                 if template.lang not in d2:
                     d2[template.lang] = template
-                    self.__logger.debug('Template added to ' + template.lang + ': ' + str(template))
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Template added to ' + template.lang + ': ' + str(template))
             else:
                 d2[DEFAULT_KEY] = template
         for value in self.__settings.skipped_addresses:
@@ -407,19 +408,23 @@ class AutoReplier:
         while retry > 0:
             try:
                 if self.__settings.imap_use_ssl:
-                    self.__logger.debug('Using IMAP4 SSL and server: ' + self.__settings.imap_server + ' and port: ' + str(self.__settings.imap_port))
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Using IMAP4 SSL and server: ' + self.__settings.imap_server + ' and port: ' + str(self.__settings.imap_port))
                     self.__imap = IMAP4_SSL(self.__settings.imap_server, self.__settings.imap_port)
                 else:
-                    self.__logger.debug('Using IMAP4 and server: ' + self.__settings.imap_server + ' and port: ' + str(self.__settings.imap_port))
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Using IMAP4 and server: ' + self.__settings.imap_server + ' and port: ' + str(self.__settings.imap_port))
                     self.__imap = IMAP4(self.__settings.imap_server, self.__settings.imap_port)
                 v: str = base64.b64decode(self.__settings.imap_password).decode('utf8')
                 self.__logger.info('IMAP4 login using user: ' + self.__settings.imap_user + ' and password: ' + re.sub('.', '*', v) + '...')
                 self.__imap.login(self.__settings.imap_user, v)
                 if self.__settings.smtp_use_ssl:
-                    self.__logger.debug('Using SMTP SSL and server: ' + self.__settings.smtp_server + ' and port: ' + str(self.__settings.smtp_port))
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Using SMTP SSL and server: ' + self.__settings.smtp_server + ' and port: ' + str(self.__settings.smtp_port))
                     self.__smtp = SMTP_SSL(self.__settings.smtp_server, self.__settings.smtp_port)
                 else:
-                    self.__logger.debug('Using SMTP and server: ' + self.__settings.smtp_server + ' and port: ' + str(self.__settings.smtp_port))
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Using SMTP and server: ' + self.__settings.smtp_server + ' and port: ' + str(self.__settings.smtp_port))
                     self.__smtp = SMTP(self.__settings.smtp_server, self.__settings.smtp_port)
                 v = base64.b64decode(self.__settings.smtp_password).decode('utf8')
                 self.__logger.info('SMTP login using user: ' + self.__settings.smtp_user + ' and password: ' + re.sub('.', '*', v) + '...')
@@ -492,7 +497,8 @@ class AutoReplier:
                 then = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S.%f")
                 self.__logger.info('Found ' + sender + ' at ' + str(row[1]) + ' - ID ' + str(row[0]))
                 if then < break_date:  # If older: Delete
-                    self.__logger.debug('Last entry ' + str(row[0]) + ' from ' + sender + ' is old. Delete...')
+                    if self.__logger.isEnabledFor(logging.DEBUG):
+                        self.__logger.debug('Last entry ' + str(row[0]) + ' from ' + sender + ' is old. Delete...')
                     cur.execute("DELETE FROM senders WHERE id=?", (str(row[0])))
                 elif then >= break_date:  # If Recent: Reject
                     self.__logger.debug('Recent entry found. Not sending any mail')
@@ -583,7 +589,8 @@ class AutoReplier:
             if template.lang:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(dedent(template.body), 'plain'))
-            self.__logger.debug('Using text plain template:\n' + template.body)
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                self.__logger.debug('Using text plain template:\n' + template.body)
         # Search in HTML templates
         template = None
         d1: Dict[str, Dict[str, ReplyTemplate]] = self.__html_templates
@@ -601,7 +608,8 @@ class AutoReplier:
             if template.lang:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(template.body, 'html'))
-            self.__logger.debug('Using HTML template:\n' + template.body)
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                self.__logger.debug('Using HTML template:\n' + template.body)
         if len(mail.items()) > 0:
             return mail
         return None
@@ -647,26 +655,28 @@ class AutoReplier:
         :param mail_id: identifier of the message
         """
         try:
-            self.__imap.select(readonly=True)
+            self.__imap.select(readonly=False)
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                self.__logger.debug('Current flags: ' + self.__imap.fetch(mail_id, '(FLAGS)'))
             _, data = self.__imap.fetch(mail_id, '(RFC822)')
+            if self.__test:
+                self.__logger.info('Test mode activated, incoming message will not be marked as answered')
+            else:
+                self.__imap.store(mail_id, '+FLAGS', 'AUTOREPLIED')
+                self.__logger.info('AUTOREPLIED flag added to the message.')
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                self.__logger.debug('New flags: ' + self.__imap.fetch(mail_id, '(FLAGS)'))
         finally:
             self.__imap.close()
         self._send_auto_reply(message_from_bytes(data[0][1]))
-        if self.__test:
-            self.__logger.info('Test mode activated, incoming message will not be marked as answered')
-        else:
-            try:
-                self.__imap.select(readonly=False)
-                self.__imap.store(mail_id, '+FLAGS', 'AUTOREPLIED')
-            finally:
-                self.__imap.close()
 
     def _check_mails(self) -> None:
         """
         Check incoming unseen and unanswered messages.
         """
         since_date: datetime.datetime = (datetime.datetime.today() - datetime.timedelta(days=self.__age_in_days))
-        self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED UNKEYWORD AUTOREPLIED' % (since_date.strftime(IMAP_DATE_FORMAT)))
+        if self.__logger.isEnabledFor(logging.DEBUG):
+            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED UNKEYWORD AUTOREPLIED' % (since_date.strftime(IMAP_DATE_FORMAT)))
         try:
             self.__imap.select(readonly=False)
             _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED UNKEYWORD AUTOREPLIED)' % (since_date.strftime(IMAP_DATE_FORMAT)))
