@@ -656,16 +656,13 @@ class AutoReplier:
         """
         try:
             self.__imap.select(readonly=False)
-            if self.__logger.isEnabledFor(logging.DEBUG):
-                self.__logger.debug('Current flags: ' + self.__imap.fetch(mail_id, '(FLAGS)'))
             _, data = self.__imap.fetch(mail_id, '(RFC822)')
             if self.__test:
                 self.__logger.info('Test mode activated, incoming message will not be marked as answered')
             else:
                 self.__imap.store(mail_id, '+FLAGS', 'AUTOREPLIED')
+                self.__imap.store(mail_id, '-FLAGS', '\\SEEN')
                 self.__logger.info('AUTOREPLIED flag added to the message.')
-            if self.__logger.isEnabledFor(logging.DEBUG):
-                self.__logger.debug('New flags: ' + self.__imap.fetch(mail_id, '(FLAGS)'))
         finally:
             self.__imap.close()
         self._send_auto_reply(message_from_bytes(data[0][1]))
