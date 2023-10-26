@@ -36,7 +36,7 @@ settings.parse(os.path.abspath(CONFIG_PATH))
 if __name__ == '__main__':
     with FileLock(LOCK_PATH):
         try:
-            AutoReplier(settings, create_rotating_log(LOG_PATH, LOG_LEVEL)).start()
+            AutoReplier(settings, create_rotating_log(settings.log_path, settings.log_level)).start()
         except KeyboardInterrupt:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             traceback.print_tb(exc_traceback, limit=6, file=sys.stderr)
