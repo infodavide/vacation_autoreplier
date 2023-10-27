@@ -31,6 +31,7 @@ LOCK_PATH: str = os.path.abspath(os.path.dirname(CONFIG_PATH)) + os.sep + '.auto
 settings: AutoReplierSettings = AutoReplierSettings()
 settings.log_path = LOG_PATH
 settings.log_level = LOG_LEVEL
+settings.db_path = os.path.splitext(CONFIG_PATH)[0] + '.db'
 settings.parse(os.path.abspath(CONFIG_PATH))
 
 if __name__ == '__main__':
