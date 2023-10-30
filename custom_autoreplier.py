@@ -10,7 +10,7 @@ from filelock import FileLock
 from autoreplier import AutoReplier, AutoReplierSettings, create_rotating_log
 
 parser = argparse.ArgumentParser(prog='Autoreplier', description='Tool used to reply to incoming messages')
-parser.add_argument('-l', help='Log level', default='INFO')
+parser.add_argument('-l', help='Log level', default='DEBUG')
 parser.add_argument('-f', required=True, help='Configuration file')
 args = parser.parse_args()
 
@@ -31,6 +31,7 @@ LOCK_PATH: str = os.path.abspath(os.path.dirname(CONFIG_PATH)) + os.sep + '.auto
 settings: AutoReplierSettings = AutoReplierSettings()
 settings.log_path = LOG_PATH
 settings.log_level = LOG_LEVEL
+settings.db_path = os.path.splitext(CONFIG_PATH)[0] + '.db'
 settings.parse(os.path.abspath(CONFIG_PATH))
 
 if __name__ == '__main__':

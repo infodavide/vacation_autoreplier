@@ -34,7 +34,7 @@ from email import message_from_bytes, message
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import make_msgid
-from imaplib import IMAP4, IMAP4_SSL
+from imaplib import IMAP4, IMAP4_SSL, ParseFlags
 from logging.handlers import RotatingFileHandler
 from os import execlp
 from abc import ABC, abstractmethod
@@ -50,12 +50,12 @@ __author__ = 'David Rolland, contact@infodavid.org, based on script written by B
 __copyright__ = 'Copyright © 2022 David Rolland'
 __license__ = 'MIT'
 
-DB_FILENAME: str = 'auto_replier.db'
 IMAP4_PORT: int = 143
 SMTP_PORT: int = 25
 DEFAULT_LANGUAGE: str = 'en'
 DEFAULT_KEY: str = 'default'
 IMAP_DATE_FORMAT: str = "%d-%b-%Y"
+AUTOREPLIED_FLAG: str = 'AUTOREPLIED'
 
 
 def create_rotating_log(path: str, level: str) -> logging.Logger:
@@ -207,6 +207,7 @@ class AutoReplierSettings(object):
     skipped_subjects: SubjectList = list()  # List of subjects (or regular expressions)  to ignore incoming message
     templates: TemplateList = list()  # List of reply templates
     path: str = None  # Path for the files used by the application
+    db_path: str = 'autoreplier.db'
     log_path: str  # Path to the logs file, not used in this version
     log_level: str  # Level of logs, not used in this version
 
@@ -339,7 +340,8 @@ class AutoReplier:
                     new_locale = 'en_US.utf8'
                 else:
                     new_locale = template.lang.lower() + '_' + template.lang.upper() + '.utf8'
-                self.__logger.debug('Locale for template: ' + new_locale)
+                if self.__logger.isEnabledFor(logging.DEBUG):
+                    self.__logger.debug('Locale for template: ' + new_locale)
                 previous_locale: str = locale.getlocale(locale.LC_TIME)
                 locale.setlocale(locale.LC_TIME, new_locale)
                 template.body = template.body.replace('${date}', self.__settings.date.strftime("%A %-d %B %Y"))
@@ -356,7 +358,8 @@ class AutoReplier:
                 d1[DEFAULT_KEY] = d2
             if len(d2) == 0:
                 d2[DEFAULT_KEY] = template
-                self.__logger.debug('Template added to default: ' + str(template))
+                if self.__logger.isEnabledFor(logging.DEBUG):
+                    self.__logger.debug('Template added to default: ' + str(template))
             #Set using email
             if template.email:
                 if template.email in d1:
@@ -468,7 +471,8 @@ class AutoReplier:
                 return True
         # Check if sender domain is ignored
         domain: str = sender.split('@')[1]
-        self.__logger.debug('Domain: ' + domain)
+        if self.__logger.isEnabledFor(logging.DEBUG):
+            self.__logger.debug('Domain: ' + domain)
         for value in self.__skipped_domains:
             if isinstance(value, Pattern):
                 if value.match(domain):
@@ -478,7 +482,8 @@ class AutoReplier:
                 return True
         # Check if subject is ignored
         subject: str = original['Subject']
-        self.__logger.debug('Subject: ' + subject)
+        if self.__logger.isEnabledFor(logging.DEBUG):
+            self.__logger.debug('Subject: ' + subject)
         for value in self.__skipped_subjects:
             if isinstance(value, Pattern):
                 if value.match(domain):
@@ -492,6 +497,9 @@ class AutoReplier:
         now: datetime.datetime = datetime.datetime.now()
         try:
             cur: sqlite3.Cursor = con.cursor()
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                for row in cur.execute("SELECT count(id) FROM senders"):
+                    self.__logger.debug('Entries in table: %s' % (str(row[0])))
             for row in cur.execute("SELECT id,date FROM senders WHERE mail=?", (sender,)):
                 break_date = now - datetime.timedelta(hours=self.__settings.block_hours)
                 then = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S.%f")
@@ -499,14 +507,14 @@ class AutoReplier:
                 if then < break_date:  # If older: Delete
                     if self.__logger.isEnabledFor(logging.DEBUG):
                         self.__logger.debug('Last entry ' + str(row[0]) + ' from ' + sender + ' is old. Delete...')
-                    cur.execute("DELETE FROM senders WHERE id=?", (str(row[0])))
+                    cur.execute("DELETE FROM senders WHERE id=?", (row[0],))
                 elif then >= break_date:  # If Recent: Reject
                     self.__logger.debug('Recent entry found. Not sending any mail')
                     skipped = True
             if skipped:
                 return skipped
             # Accept
-            self.__logger.debug('Memorizing ' + sender)
+            self.__logger.info('Memorizing ' + sender)
             cur.execute("INSERT INTO senders (mail, date) values (?, ?)", (sender, now))
             con.commit()
         except Exception as ex:
@@ -522,8 +530,8 @@ class AutoReplier:
         """
         Connect to the SQLITE3 database.
         """
-        self.__logger.info('Connecting to the database...')
-        con: sqlite3.Connection = sqlite3.connect(self.__settings.path + os.sep + DB_FILENAME, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+        self.__logger.info('Connecting to the database: %s...' %  self.__settings.db_path)
+        con: sqlite3.Connection = sqlite3.connect( self.__settings.db_path, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
         # self.__db_con.set_trace_callback(print)
         self.__logger.info('Connected to the database')
         return con
@@ -533,13 +541,16 @@ class AutoReplier:
         Create the table if it does not exist.
         """
         self.__logger.info('Creating table if not present in the database...')
-        if self.__test and os.path.exists(self.__settings.path + os.sep + DB_FILENAME):
-            os.unlink(self.__settings.path + os.sep + DB_FILENAME)
+        if self.__test and os.path.exists(self.__settings.db_path):
+            os.unlink(self.__settings.db_path)
         con: sqlite3.Connection = self._db_connect()
         try:
             cur: sqlite3.Cursor = con.cursor()
             cur.execute('''CREATE TABLE IF NOT EXISTS senders (id INTEGER PRIMARY KEY, mail text, date datetime)''')
             con.commit()
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                for row in cur.execute("SELECT count(id) FROM senders"):
+                    self.__logger.debug('Entries in table: %s' % (str(row[0])))
         except Exception as ex:
             exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
             traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
@@ -547,7 +558,7 @@ class AutoReplier:
         finally:
             if con:
                 con.close()
-        self.__logger.info('Table created')
+        self.__logger.info('Table ready')
 
     # noinspection PyTypeChecker
     def _create_auto_reply(self, original: message.Message):
@@ -564,14 +575,16 @@ class AutoReplier:
             if original_language is None:
                 original_language = DEFAULT_LANGUAGE
         original_language = original_language.split(',')[0]
-        self.__logger.debug('Original language: ' + original_language)
+        if self.__logger.isEnabledFor(logging.DEBUG):
+            self.__logger.debug('Original language: ' + original_language)
         mail: MIMEMultipart = MIMEMultipart('alternative')
         mail['Message-ID'] = make_msgid()
         mail['References'] = mail['In-Reply-To'] = original['Message-ID']
         mail['Subject'] = 'Re: ' + original['Subject']
         mail['From'] = original_recipient
         mail['To'] = original['Reply-To'] or original['From']
-        self.__logger.debug('Original recipient: ' + original_recipient)
+        if self.__logger.isEnabledFor(logging.DEBUG):
+            self.__logger.debug('Original recipient: ' + original_recipient)
         template: ReplyTemplate = None
         # Search in text templates
         d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
@@ -657,12 +670,21 @@ class AutoReplier:
         try:
             self.__imap.select(readonly=False)
             _, data = self.__imap.fetch(mail_id, '(RFC822)')
+            flags = list()
+            for flag in ParseFlags(data[1]):
+                flags.append(flag.decode())
             if self.__test:
                 self.__logger.info('Test mode activated, incoming message will not be marked as answered')
             else:
-                self.__imap.store(mail_id, '+FLAGS', 'AUTOREPLIED')
+                self.__imap.store(mail_id, '+FLAGS', AUTOREPLIED_FLAG)
                 self.__imap.store(mail_id, '-FLAGS', '\\SEEN')
-                self.__logger.info('AUTOREPLIED flag added to the message.')
+                self.__logger.info('%s flag added to the message.' % AUTOREPLIED_FLAG)
+            flags_str: str = ' '.join(flags)
+            if self.__logger.isEnabledFor(logging.DEBUG):
+                self.__logger.debug('Flags: %s' % flags_str)
+            if AUTOREPLIED_FLAG in flags_str:
+                self.__logger.warning('Message already has the %s flag' % AUTOREPLIED_FLAG)
+                return
         finally:
             self.__imap.close()
         self._send_auto_reply(message_from_bytes(data[0][1]))
@@ -673,10 +695,10 @@ class AutoReplier:
         """
         since_date: datetime.datetime = (datetime.datetime.today() - datetime.timedelta(days=self.__age_in_days))
         if self.__logger.isEnabledFor(logging.DEBUG):
-            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED UNKEYWORD AUTOREPLIED' % (since_date.strftime(IMAP_DATE_FORMAT)))
+            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED' % since_date.strftime(IMAP_DATE_FORMAT))
         try:
             self.__imap.select(readonly=False)
-            _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED UNKEYWORD AUTOREPLIED)' % (since_date.strftime(IMAP_DATE_FORMAT)))
+            _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED)' % since_date.strftime(IMAP_DATE_FORMAT))
         finally:
             self.__imap.close()
         for mail_id in data[0].split():
@@ -711,7 +733,7 @@ class AutoReplier:
         with self.__start_lock:
             try:
                 self._create_table()
-                self.__logger.info('Now listening... Blocking rebounds for ' + str(self.__settings.block_hours) + ' hours')
+                self.__logger.info('Now checking... Blocking rebounds for ' + str(self.__settings.block_hours) + ' hours')
                 self.__active = True
                 if datetime.datetime.now() >= self.__settings.date:
                     self.__logger.info('Date passed... stopping')
