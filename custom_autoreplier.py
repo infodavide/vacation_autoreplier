@@ -10,7 +10,7 @@ from filelock import FileLock
 from autoreplier import AutoReplier, AutoReplierSettings, create_rotating_log
 
 parser = argparse.ArgumentParser(prog='Autoreplier', description='Tool used to reply to incoming messages')
-parser.add_argument('-l', help='Log level', default='INFO')
+parser.add_argument('-l', help='Log level', default='DEBUG')
 parser.add_argument('-f', required=True, help='Configuration file')
 args = parser.parse_args()
 

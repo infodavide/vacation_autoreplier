@@ -507,7 +507,7 @@ class AutoReplier:
                 if then < break_date:  # If older: Delete
                     if self.__logger.isEnabledFor(logging.DEBUG):
                         self.__logger.debug('Last entry ' + str(row[0]) + ' from ' + sender + ' is old. Delete...')
-                    cur.execute("DELETE FROM senders WHERE id=?", (str(row[0])))
+                    cur.execute("DELETE FROM senders WHERE id=?", (row[0],))
                 elif then >= break_date:  # If Recent: Reject
                     self.__logger.debug('Recent entry found. Not sending any mail')
                     skipped = True
@@ -558,7 +558,7 @@ class AutoReplier:
         finally:
             if con:
                 con.close()
-        self.__logger.info('Table created')
+        self.__logger.info('Table ready')
 
     # noinspection PyTypeChecker
     def _create_auto_reply(self, original: message.Message):
@@ -671,7 +671,7 @@ class AutoReplier:
             self.__imap.select(readonly=False)
             _, data = self.__imap.fetch(mail_id, '(RFC822)')
             flags = list()
-            for flag in ParseFlags(data[0][0]):
+            for flag in ParseFlags(data[1]):
                 flags.append(flag.decode())
             if self.__test:
                 self.__logger.info('Test mode activated, incoming message will not be marked as answered')
@@ -683,7 +683,7 @@ class AutoReplier:
             if self.__logger.isEnabledFor(logging.DEBUG):
                 self.__logger.debug('Flags: %s' % flags_str)
             if AUTOREPLIED_FLAG in flags_str:
-                self.__logger.warning('Message already has the %s flags' % AUTOREPLIED_FLAG)
+                self.__logger.warning('Message already has the %s flag' % AUTOREPLIED_FLAG)
                 return
         finally:
             self.__imap.close()
@@ -695,10 +695,10 @@ class AutoReplier:
         """
         since_date: datetime.datetime = (datetime.datetime.today() - datetime.timedelta(days=self.__age_in_days))
         if self.__logger.isEnabledFor(logging.DEBUG):
-            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED UNKEYWORD %s' % (since_date.strftime(IMAP_DATE_FORMAT), AUTOREPLIED_FLAG))
+            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED' % since_date.strftime(IMAP_DATE_FORMAT))
         try:
             self.__imap.select(readonly=False)
-            _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED UNKEYWORD %s)' % (since_date.strftime(IMAP_DATE_FORMAT), AUTOREPLIED_FLAG))
+            _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED)' % since_date.strftime(IMAP_DATE_FORMAT))
         finally:
             self.__imap.close()
         for mail_id in data[0].split():
@@ -733,7 +733,7 @@ class AutoReplier:
         with self.__start_lock:
             try:
                 self._create_table()
-                self.__logger.info('Now listening... Blocking rebounds for ' + str(self.__settings.block_hours) + ' hours')
+                self.__logger.info('Now checking... Blocking rebounds for ' + str(self.__settings.block_hours) + ' hours')
                 self.__active = True
                 if datetime.datetime.now() >= self.__settings.date:
                     self.__logger.info('Date passed... stopping')
