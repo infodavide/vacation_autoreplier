@@ -1,6 +1,8 @@
 #!/usr/bin/python
-# -*- coding: utf-*-
-
+# -*- coding: utf-8-
+"""
+Customization and initialization of auto-replier
+"""
 import argparse
 import os
 import pathlib
@@ -41,4 +43,4 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             traceback.print_tb(exc_traceback, limit=6, file=sys.stderr)
-            exit()
+            sys.exit()

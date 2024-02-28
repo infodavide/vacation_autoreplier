@@ -1,3 +1,4 @@
+# -*- coding: utf-8-
 """
 Author: contact@infodavid.org
 Automatically replies to messages both unread and unanswered.
@@ -29,17 +30,13 @@ import datetime
 import html
 import xml.etree.ElementTree as etree
 from enum import Enum
-from typing import Any, Dict, List, cast, Pattern
 from email import message_from_bytes, message
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import make_msgid
 from imaplib import IMAP4, IMAP4_SSL, ParseFlags
 from logging.handlers import RotatingFileHandler
-from os import execlp
-from abc import ABC, abstractmethod
 from smtplib import SMTP, SMTP_SSL
-from subprocess import call
 from textwrap import dedent
 from time import sleep
 from io import StringIO
@@ -60,7 +57,7 @@ AUTOREPLIED_FLAG: str = 'AUTOREPLIED'
 
 def create_rotating_log(path: str, level: str) -> logging.Logger:
     """
-    Create the logger with file rotation.
+    Create the logger with file rotation
     :param path: the path of the main log file
     :param level: the log level as defined in logging module
     :return: the logger
@@ -70,7 +67,8 @@ def create_rotating_log(path: str, level: str) -> logging.Logger:
     if not os.path.exists(path_obj.parent.absolute()):
         os.makedirs(path_obj.parent.absolute())
     if os.path.exists(path):
-        open(path, 'w').close()
+        with open(path, 'w', encoding='UTF-8') as f:
+            f.close()
     else:
         path_obj.touch()
     # noinspection Spellchecker
@@ -91,7 +89,14 @@ def create_rotating_log(path: str, level: str) -> logging.Logger:
 
 # noinspection PyTypeChecker
 def get_message_language(value: message.Message) -> str:
+    """
+    Attempt to retrieve the language associated to the message
+    :param value: the message
+    :return: the language code or default
+    """
+    # pylint: disable=unused-variable
     body: str = None
+    # pylint: enable=unused-variable
     if value.is_multipart():
         for part in value.walk():
             ctype: str = part.get_content_type()
@@ -116,32 +121,75 @@ def get_message_language(value: message.Message) -> str:
 
 
 class HTMLStripper(HTMLParser):
+    """
+    Stripper
+    """
     @staticmethod
-    def strip_tags(value) -> str:
+    def strip_tags(value: str) -> str:
+        """
+        Strip tags
+        :param value: the text
+        :return: the result
+        """
         stripper: HTMLStripper = HTMLStripper()
         stripper.feed(value)
         return stripper.get_data()
 
     def __init__(self):
+        """
+        Initialize
+        """
         super().__init__()
         self.reset()
         self.strict = False
         self.convert_charrefs = True
         self.text = StringIO()
 
-    def handle_data(self, d) -> None:
-        self.text.write(d)
+    def handle_data(self, data: str) -> None:
+        """
+        Handle the data
+        :param data: the data
+        """
+        self.text.write(data)
 
     def get_data(self) -> str:
+        """
+        Return the data
+        :return: the data
+        """
         return self.text.getvalue()
+
+    # pylint: disable=redefined-outer-name
+    def error(self, message: str):
+        # pylint: disable=broad-exception-raised
+        raise Exception(message)
+        # pylint: enable=broad-exception-raised
 
 
 class ReplyTemplateType(str, Enum):
+    """
+    Enumeration describing the types for templates
+    """
     HTML = 'HTML'
     TEXT = 'TEXT'
 
+    @staticmethod
+    def of(value: str):
+        """
+        Return the value associated to the given string or None
+        :param value: the string value
+        :return: the value or None
+        """
+        if value is None:
+            return None
+        if value.upper() == ReplyTemplateType.HTML:
+            return ReplyTemplateType.HTML
+        if value.upper() == ReplyTemplateType.TEXT:
+            return ReplyTemplateType.TEXT
+        return None
 
-class ReplyTemplate(object):
+
+class ReplyTemplate:
     """
     Template used by the replier as reply.
     """
@@ -158,7 +206,7 @@ class ReplyTemplate(object):
         if not self.lang:
             self.lang = DEFAULT_LANGUAGE
         self.lang = self.lang.lower()
-        self.type = node.get('type')
+        self.type = ReplyTemplateType.of(node.get('type'))
         if not self.type:
             self.type = ReplyTemplateType.TEXT
         self.email = node.get('email')
@@ -179,13 +227,14 @@ class ReplyTemplate(object):
         return buffer
 
 
-AddressList = List[str]
-DomainList = List[str]
-SubjectList = List[str]
-TemplateList = List[ReplyTemplate]
+AddressList = list[str]
+DomainList = list[str]
+SubjectList = list[str]
+TemplateList = list[ReplyTemplate]
 
 
-class AutoReplierSettings(object):
+# pylint: disable=too-many-instance-attributes
+class AutoReplierSettings:
     """
     Settings used by the replier.
     """
@@ -202,10 +251,10 @@ class AutoReplierSettings(object):
     smtp_user: str = None  # User used to connect to your SMTP server
     smtp_password: str = None  # Password (base64 encoded) of the user used to connect to your SMTP server
     block_hours: int = 12  # Number of hours used to block incoming email address
-    skipped_addresses: AddressList = list()  # List of email addresses (or regular expressions) used to ignore incoming message
-    skipped_domains: DomainList = list()  # List of domains (or regular expressions)  to ignore incoming message
-    skipped_subjects: SubjectList = list()  # List of subjects (or regular expressions)  to ignore incoming message
-    templates: TemplateList = list()  # List of reply templates
+    skipped_addresses: AddressList = []  # List of email addresses (or regular expressions) used to ignore incoming message
+    skipped_domains: DomainList = []  # List of domains (or regular expressions)  to ignore incoming message
+    skipped_subjects: SubjectList = []  # List of subjects (or regular expressions)  to ignore incoming message
+    templates: TemplateList = []  # List of reply templates
     path: str = None  # Path for the files used by the application
     db_path: str = 'autoreplier.db'
     log_path: str  # Path to the logs file, not used in this version
@@ -215,7 +264,7 @@ class AutoReplierSettings(object):
         """
         Parse the XML configuration.
         """
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             tree = etree.parse(f)
         root_node: etree.Element = tree.getroot()
         v = root_node.get('refresh-delay')
@@ -307,11 +356,11 @@ class AutoReplier:
     __age_in_days: int = 1
     __login_retry_delay: int = 15
     __login_retries: int = 10
-    __html_templates: Dict[str, Dict[str, ReplyTemplate]] = {}  # List of reply templates in HTML by address and language
-    __text_templates: Dict[str, Dict[str, ReplyTemplate]] = {}  # List of reply templates in plain text by address and language
-    __skipped_addresses: List = list()  # List of texts or patterns describing the addresses to ignore
-    __skipped_domains: List = list()  # List of texts or patterns describing the domains to ignore
-    __skipped_subjects: List = list()  # List of texts or patterns describing the subjects to ignore
+    __html_templates: dict[str, dict[str, ReplyTemplate]] = {}  # List of reply templates in HTML by address and language
+    __text_templates: dict[str, dict[str, ReplyTemplate]] = {}  # List of reply templates in plain text by address and language
+    __skipped_addresses: list[str] = []  # List of texts or patterns describing the addresses to ignore
+    __skipped_domains: list[str] = []  # List of texts or patterns describing the domains to ignore
+    __skipped_subjects: list[str] = []  # List of texts or patterns describing the subjects to ignore
 
     def __init__(self, settings: AutoReplierSettings, logger: logging.Logger):
         self.__settings = settings
@@ -330,6 +379,7 @@ class AutoReplier:
         self._login()
 
     # noinspection PyTypeChecker
+    # pylint: disable=too-complex
     def _initialize(self) -> None:
         """
         Do some preprocessing tasks.
@@ -347,14 +397,14 @@ class AutoReplier:
                 template.body = template.body.replace('${date}', self.__settings.date.strftime("%A %-d %B %Y"))
                 locale.setlocale(locale.LC_TIME, previous_locale)
             #HTML or text template ?
-            d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
+            d1: dict[str, dict[str, ReplyTemplate]] = self.__text_templates
             if template.type == ReplyTemplateType.HTML:
                 d1 = self.__html_templates
             #Set default if not already done
             if DEFAULT_KEY in d1:
-                d2: Dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
+                d2: dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
             else:
-                d2: Dict[str, ReplyTemplate] = {}
+                d2: dict[str, ReplyTemplate] = {}
                 d1[DEFAULT_KEY] = d2
             if len(d2) == 0:
                 d2[DEFAULT_KEY] = template
@@ -363,9 +413,9 @@ class AutoReplier:
             #Set using email
             if template.email:
                 if template.email in d1:
-                    d2: Dict[str, ReplyTemplate] = d1[template.email]
+                    d2: dict[str, ReplyTemplate] = d1[template.email]
                 else:
-                    d2: Dict[str, ReplyTemplate] = {}
+                    d2: dict[str, ReplyTemplate] = {}
                     d1[template.email] = d2
             else:
                 d2 = d1[DEFAULT_KEY]
@@ -381,7 +431,7 @@ class AutoReplier:
             try:
                 self.__skipped_addresses.append(re.compile(value, flags=0))
             except re.error as ex:
-                exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
+                _, _, exc_traceback4 = sys.exc_info()
                 traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
                 self.__logger.error(ex)
                 self.__skipped_addresses.append(value)
@@ -389,7 +439,7 @@ class AutoReplier:
             try:
                 self.__skipped_domains.append(re.compile(value, flags=0))
             except re.error as ex:
-                exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
+                _, _, exc_traceback4 = sys.exc_info()
                 traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
                 self.__logger.error(ex)
                 self.__skipped_domains.append(value)
@@ -397,7 +447,7 @@ class AutoReplier:
             try:
                 self.__skipped_subjects.append(re.compile(value, flags=0))
             except re.error as ex:
-                exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
+                _, _, exc_traceback4 = sys.exc_info()
                 traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
                 self.__logger.error(ex)
                 self.__skipped_subjects.append(value)
@@ -438,9 +488,8 @@ class AutoReplier:
                 retry = retry - 1
                 if retry <= 0:
                     raise ex
-                else:
-                    self.__logger.warning('Login failed, retrying in ' + str(self.__login_retry_delay) + 's')
-                    sleep(self.__login_retry_delay)
+                self.__logger.warning('Login failed, retrying in ' + str(self.__login_retry_delay) + 's')
+                sleep(self.__login_retry_delay)
 
     def close(self) -> None:
         """
@@ -455,7 +504,13 @@ class AutoReplier:
             self.__imap.logout()
         self.__logger.info('Closing done')
 
-    def _is_skipped(self, original: message.Message):
+    # pylint: disable=too-complex
+    def _is_skipped(self, original: message.Message) -> bool:
+        """
+        Internal check if the message must be processed or not
+        :param original: the message
+        :return: true to skip processing
+        """
         sender_full: str = original['Reply-To'] or original['From']
         sender: str = sender_full
         if '<' in sender:
@@ -463,7 +518,7 @@ class AutoReplier:
         self.__logger.info('Incoming message from ' + sender + ' (' + original['Subject'] + '). Checking history....')
         # Check if sender address is ignored
         for value in self.__skipped_addresses:
-            if isinstance(value, Pattern):
+            if isinstance(value, re.Pattern):
                 if value.match(sender):
                     self.__logger.info('Mail from ' + sender + ' is rejected by address filter: ' + value.pattern)
                     return True
@@ -474,7 +529,7 @@ class AutoReplier:
         if self.__logger.isEnabledFor(logging.DEBUG):
             self.__logger.debug('Domain: ' + domain)
         for value in self.__skipped_domains:
-            if isinstance(value, Pattern):
+            if isinstance(value, re.Pattern):
                 if value.match(domain):
                     self.__logger.info('Mail from ' + sender + ' is rejected by domain filter: ' + value.pattern)
                     return True
@@ -485,7 +540,7 @@ class AutoReplier:
         if self.__logger.isEnabledFor(logging.DEBUG):
             self.__logger.debug('Subject: ' + subject)
         for value in self.__skipped_subjects:
-            if isinstance(value, Pattern):
+            if isinstance(value, re.Pattern):
                 if value.match(domain):
                     self.__logger.info('Mail from ' + sender + ' is rejected by subject filter: ' + value.pattern + " and subject: " + subject)
                     return True
@@ -499,14 +554,14 @@ class AutoReplier:
             cur: sqlite3.Cursor = con.cursor()
             if self.__logger.isEnabledFor(logging.DEBUG):
                 for row in cur.execute("SELECT count(id) FROM senders"):
-                    self.__logger.debug('Entries in table: %s' % (str(row[0])))
+                    self.__logger.debug('Entries in table: %s', str(row[0]))
             for row in cur.execute("SELECT id,date FROM senders WHERE mail=?", (sender,)):
                 break_date = now - datetime.timedelta(hours=self.__settings.block_hours)
                 then = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S.%f")
-                self.__logger.info('Found ' + sender + ' at ' + str(row[1]) + ' - ID ' + str(row[0]))
+                self.__logger.info('Found %s at %s - ID %s', sender,  str(row[1]), str(row[0]))
                 if then < break_date:  # If older: Delete
                     if self.__logger.isEnabledFor(logging.DEBUG):
-                        self.__logger.debug('Last entry ' + str(row[0]) + ' from ' + sender + ' is old. Delete...')
+                        self.__logger.debug('Last entry %s from %s is old. Delete...', str(row[0]), sender)
                     cur.execute("DELETE FROM senders WHERE id=?", (row[0],))
                 elif then >= break_date:  # If Recent: Reject
                     self.__logger.debug('Recent entry found. Not sending any mail')
@@ -517,10 +572,12 @@ class AutoReplier:
             self.__logger.info('Memorizing ' + sender)
             cur.execute("INSERT INTO senders (mail, date) values (?, ?)", (sender, now))
             con.commit()
+        # pylint: disable=broad-exception-caught
         except Exception as ex:
-            exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
+            _, _, exc_traceback4 = sys.exc_info()
             traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
             self.__logger.error(ex)
+        # pylint: enable=broad-exception-caught
         finally:
             if con:
                 con.close()
@@ -530,8 +587,8 @@ class AutoReplier:
         """
         Connect to the SQLITE3 database.
         """
-        self.__logger.info('Connecting to the database: %s...' %  self.__settings.db_path)
-        con: sqlite3.Connection = sqlite3.connect( self.__settings.db_path, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+        self.__logger.info('Connecting to the database: %s...', self.__settings.db_path)
+        con: sqlite3.Connection = sqlite3.connect(self.__settings.db_path, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
         # self.__db_con.set_trace_callback(print)
         self.__logger.info('Connected to the database')
         return con
@@ -550,11 +607,13 @@ class AutoReplier:
             con.commit()
             if self.__logger.isEnabledFor(logging.DEBUG):
                 for row in cur.execute("SELECT count(id) FROM senders"):
-                    self.__logger.debug('Entries in table: %s' % (str(row[0])))
+                    self.__logger.debug('Entries in table: %s', str(row[0]))
+        # pylint: disable=broad-exception-caught
         except Exception as ex:
-            exc_type4, exc_value4, exc_traceback4 = sys.exc_info()
+            _, _, exc_traceback4 = sys.exc_info()
             traceback.print_tb(exc_traceback4, limit=6, file=sys.stderr)
             self.__logger.error(ex)
+        # pylint: enable=broad-exception-caught
         finally:
             if con:
                 con.close()
@@ -575,67 +634,63 @@ class AutoReplier:
             if original_language is None:
                 original_language = DEFAULT_LANGUAGE
         original_language = original_language.split(',')[0]
-        if self.__logger.isEnabledFor(logging.DEBUG):
-            self.__logger.debug('Original language: ' + original_language)
+        self.__logger.debug('Original language: %s', original_language)
         mail: MIMEMultipart = MIMEMultipart('alternative')
         mail['Message-ID'] = make_msgid()
         mail['References'] = mail['In-Reply-To'] = original['Message-ID']
         mail['Subject'] = 'Re: ' + original['Subject']
         mail['From'] = original_recipient
         mail['To'] = original['Reply-To'] or original['From']
-        if self.__logger.isEnabledFor(logging.DEBUG):
-            self.__logger.debug('Original recipient: ' + original_recipient)
+        self.__logger.debug('Original recipient: %s', original_recipient)
         template: ReplyTemplate = None
         # Search in text templates
-        d1: Dict[str, Dict[str, ReplyTemplate]] = self.__text_templates
+        d1: dict[str, dict[str, ReplyTemplate]] = self.__text_templates
         if original_recipient in d1:
-            d2: Dict[str, ReplyTemplate] = d1[original_recipient]
+            d2: dict[str, ReplyTemplate] = d1[original_recipient]
             if original_language in d2:
                 template = d2[original_language]
             elif DEFAULT_KEY in d2:
                 template = d2[DEFAULT_KEY]
         elif DEFAULT_KEY in d1:
-            d2: Dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
+            d2: dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
             if DEFAULT_KEY in d2:
                 template = d2[DEFAULT_KEY]
         if template:
             if template.lang:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(dedent(template.body), 'plain'))
-            if self.__logger.isEnabledFor(logging.DEBUG):
-                self.__logger.debug('Using text plain template:\n' + template.body)
+            self.__logger.debug('Using text plain template:\n%s', template.body)
         # Search in HTML templates
         template = None
-        d1: Dict[str, Dict[str, ReplyTemplate]] = self.__html_templates
+        d1: dict[str, dict[str, ReplyTemplate]] = self.__html_templates
         if original_recipient in d1:
-            d2: Dict[str, ReplyTemplate] = d1[original_recipient]
+            d2: dict[str, ReplyTemplate] = d1[original_recipient]
             if original_language in d2:
                 template = d2[original_language]
             elif DEFAULT_KEY in d2:
                 template = d2[DEFAULT_KEY]
         elif DEFAULT_KEY in d1:
-            d2: Dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
+            d2: dict[str, ReplyTemplate] = d1[DEFAULT_KEY]
             if DEFAULT_KEY in d2:
                 template = d2[DEFAULT_KEY]
         if template:
             if template.lang:
                 mail['Content-Language'] = template.lang
             mail.attach(MIMEText(template.body, 'html'))
-            if self.__logger.isEnabledFor(logging.DEBUG):
-                self.__logger.debug('Using HTML template:\n' + template.body)
+            self.__logger.debug('Using HTML template:\n%s', template.body)
         if len(mail.items()) > 0:
             return mail
         return None
 
     # noinspection PyBroadException
-    def _send_auto_reply(self, original: message.Message):
+    def _send_auto_reply(self, original: message.Message) -> None:
         """
         Check the sender and if not ignored, reply to the message
-        :param mail_id: identifier of the message
+        :param original: the message
         """
         # Check if address has been used 12h or if it must be ignored
         if self._is_skipped(original):
-            self.__logger.info('Mail from "' + original['From'] + '" will be ignored')
+            self.__logger.info('Mail from "%s" will be ignored', original['From'])
             return
         # Send with Rate limit & error prevention
         success = False
@@ -653,37 +708,40 @@ class AutoReplier:
                     self.__logger.warning('No template available')
                     success = False
                 if success:
-                    self.__logger.info('Replied to "' + original['From'] + '" for the mail "' + original['Subject'] + '"')
+                    self.__logger.info('Replied to "%s" for the mail "%s"', original['From'], original['Subject'])
+            # pylint: disable=broad-exception-caught
             except Exception:
-                exc_type, exc_value, exc_traceback = sys.exc_info()
+                _, _, exc_traceback = sys.exc_info()
                 traceback.print_tb(exc_traceback, limit=6, file=sys.stderr)
                 self.__logger.warning('Error on send (rate limit?). Wait 30s and reconnect....')
                 self.close()
                 time.sleep(30)
                 self._login()
+            # pylint: enable=broad-exception-caught
 
     def _reply(self, mail_id: str) -> None:
         """
-        Reply to the message using its identifier.
+        Reply to the message using its identifier
         :param mail_id: identifier of the message
         """
         try:
             self.__imap.select(readonly=False)
             _, data = self.__imap.fetch(mail_id, '(RFC822)')
-            flags = list()
-            for flag in ParseFlags(data[1]):
-                flags.append(flag.decode())
+            flags = []
+            if data[1] is not None:
+                for flag in ParseFlags(str(data[1])):
+                    flags.append(flag.decode())
             if self.__test:
                 self.__logger.info('Test mode activated, incoming message will not be marked as answered')
             else:
                 self.__imap.store(mail_id, '+FLAGS', AUTOREPLIED_FLAG)
                 self.__imap.store(mail_id, '-FLAGS', '\\SEEN')
-                self.__logger.info('%s flag added to the message.' % AUTOREPLIED_FLAG)
+                self.__logger.info('%s flag added to the message.', AUTOREPLIED_FLAG)
             flags_str: str = ' '.join(flags)
             if self.__logger.isEnabledFor(logging.DEBUG):
-                self.__logger.debug('Flags: %s' % flags_str)
+                self.__logger.debug('Flags: %s', flags_str)
             if AUTOREPLIED_FLAG in flags_str:
-                self.__logger.warning('Message already has the %s flag' % AUTOREPLIED_FLAG)
+                self.__logger.warning('Message already has the %s flag', AUTOREPLIED_FLAG)
                 return
         finally:
             self.__imap.close()
@@ -695,10 +753,10 @@ class AutoReplier:
         """
         since_date: datetime.datetime = (datetime.datetime.today() - datetime.timedelta(days=self.__age_in_days))
         if self.__logger.isEnabledFor(logging.DEBUG):
-            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED' % since_date.strftime(IMAP_DATE_FORMAT))
+            self.__logger.debug('Searching messages using: SINCE "%s" UNSEEN UNANSWERED', since_date.strftime(IMAP_DATE_FORMAT))
         try:
             self.__imap.select(readonly=False)
-            _, data = self.__imap.search(None, '(SINCE "%s" UNSEEN UNANSWERED)' % since_date.strftime(IMAP_DATE_FORMAT))
+            _, data = self.__imap.search(None, f'(SINCE "{since_date.strftime(IMAP_DATE_FORMAT)}" UNSEEN UNANSWERED)')
         finally:
             self.__imap.close()
         for mail_id in data[0].split():
@@ -733,7 +791,7 @@ class AutoReplier:
         with self.__start_lock:
             try:
                 self._create_table()
-                self.__logger.info('Now checking... Blocking rebounds for ' + str(self.__settings.block_hours) + ' hours')
+                self.__logger.info('Now checking... Blocking rebounds for %s hours', str(self.__settings.block_hours))
                 self.__active = True
                 if datetime.datetime.now() >= self.__settings.date:
                     self.__logger.info('Date passed... stopping')
