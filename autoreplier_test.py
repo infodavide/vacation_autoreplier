@@ -1,22 +1,35 @@
 #!/usr/bin/python
-# -*- coding: utf-*-
+# -*- coding: utf-8-
+"""
+Main test suite
+"""
 import unittest
 from autoreplier import AutoReplier, AutoReplierSettings
 
 
 class AutoReplierTest(unittest.TestCase):
-
+    """
+    Test suite for class AutoReplier
+    """
     def test_close(self) -> None:
-        pass
+        """
+        Test close on AutoReplier
+        """
 
     def test_start(self) -> None:
-        pass
+        """
+        Test start on AutoReplier
+        """
 
     def test_stop(self) -> None:
-        pass
+        """
+        Test stop on AutoReplier
+        """
 
     def test_is_running(self) -> None:
-        pass
+        """
+        Test is_running on AutoReplier
+        """
 
 
 if __name__ == '__main__':
